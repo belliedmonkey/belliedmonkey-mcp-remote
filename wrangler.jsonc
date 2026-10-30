@@ -1,0 +1,25 @@
+{
+  "name": "belliedmonkey-mcp-remote",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-30",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "account_id": "a7dbeb09637ad5f3cb77169160cfa9f3",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "MCP_RESOURCE_URL": "https://mcp.belliedmonkey.cc/mcp/v1",
+    "ISSUER": "https://mcp.belliedmonkey.cc"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "b09e9e4d1ba945299d2e26a9b601e5a5"
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "mcp.belliedmonkey.cc",
+      "custom_domain": true
+    }
+  ]
+}
