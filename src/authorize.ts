@@ -31,6 +31,7 @@ function page(title: string, body: string): Response {
   h1 { font-size: 1.25rem; }
   label { display: block; margin: 0.75rem 0 0.25rem; font-size: 0.9rem; }
   input[type=email] { width: 100%; padding: 0.55rem 0.65rem; font-size: 1rem; box-sizing: border-box; }
+  .hint { display: block; color: #666; font-size: 0.8rem; margin: 0 0 0.35rem; line-height: 1.4; }
   .warn { background: #fff3cd; color: #664d03; padding: 0.6rem 0.75rem; border-radius: 6px; font-size: 0.9rem; }
   .row { display: flex; gap: 0.5rem; margin-top: 1rem; }
   button { padding: 0.55rem 1rem; font-size: 1rem; cursor: pointer; }
@@ -71,25 +72,27 @@ export async function handleAuthorize(
         )
         .join('');
       const body = `
-  <h1>连接大肚猴翻译 MCP</h1>
-  <p>允许 <strong>${escapeHtml(name)}</strong> 代表你调用 Remote MCP 工具（编排/深链；页译与听译副作用仍在本机 App/扩展）。</p>
+  <h1>连接大肚猴翻译</h1>
+  <p>允许 <strong>${escapeHtml(name)}</strong> 代表你连接大肚猴翻译。云端只负责编排；开麦、读页、写学习库都在你的本机 App 或扩展里确认。</p>
   ${hostWarn}
   <form method="post" action="/authorize">
     <input type="hidden" name="handle" value="${escapeHtml(consent.handle)}">
     <input type="hidden" name="flavor" value="${escapeHtml(flavor)}">
-    <label for="email">大肚猴账号邮箱（本拍最小授权；未接 Supabase 会话）</label>
-    <input id="email" name="email" type="email" required autocomplete="username" placeholder="you@example.com">
+    <label for="email">邮箱</label>
+    <span class="hint" id="email-hint">当前是邮箱授权门（临时），还不是大肚猴正式账号或订阅绑定。</span>
+    <input id="email" name="email" type="email" required autocomplete="username" placeholder="you@example.com" aria-describedby="email-hint">
     <fieldset style="border:0;padding:0;margin:0.75rem 0 0">
-      <legend class="muted">权限范围</legend>
+      <legend class="muted">权限范围（用于连接工具；不扩大权限）</legend>
       ${scopes || '<p class="muted">mcp:read</p>'}
     </fieldset>
     <div class="row">
       <button name="decision" value="approve" type="submit">允许并连接</button>
       <button name="decision" value="deny" type="submit">拒绝</button>
     </div>
-    <p class="muted">flavor=${escapeHtml(flavor)} · BEL-151 P1-a · 不在聊天内假称听译引擎已通</p>
+    <p class="muted">连接成功不代表听译已通。</p>
   </form>`;
-      const res = page('授权 · 大肚猴 MCP', body);
+      // Optional deny landing copy (not Live this order): 已拒绝连接。可稍后再从「连接应用」重试。
+      const res = page('授权 · 大肚猴翻译', body);
       // Merge consent cookies/headers
       const headers = new Headers(res.headers);
       consent.headers.forEach((v, k) => {
