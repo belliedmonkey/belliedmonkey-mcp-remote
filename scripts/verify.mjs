@@ -294,23 +294,34 @@ async function main() {
   }
 
   const ready = await callTool('ready.check', { source: 'mcp' }, 3);
+  const readyMsg = String(ready.receipt?.message || '');
   log(
     'ready_check_honest_gap',
     ready.status === 200 &&
       ready.receipt?.ok === true &&
       ready.receipt?.code === 'ok' &&
-      String(ready.receipt?.message || '').includes('need_app'),
+      ready.receipt?.fix?.gap === 'need_app' &&
+      readyMsg.includes('尚未检测到') &&
+      !readyMsg.includes('oauth_user=') &&
+      !/缺口\s*need_app/.test(readyMsg),
     ready.receipt,
   );
 
   const setup = await callTool('open_setup', { step: 'install_app', source: 'mcp' }, 4);
   const link = setup.receipt?.fix?.open_setup || '';
+  const setupMsg = String(setup.receipt?.message || '');
+  const toolsListDesc = (listed.json?.result?.tools || []).find((t) => t.name === 'open_setup')?.description || '';
   log(
     'open_setup',
     setup.status === 200 &&
       setup.receipt?.ok === true &&
-      (link.startsWith('belliedmonkey://') || link.startsWith('belliedmonkeycn://')),
-    setup.receipt,
+      (link.startsWith('belliedmonkey://') || link.startsWith('belliedmonkeycn://')) &&
+      setupMsg.includes('本机打开大肚猴设置') &&
+      !setupMsg.includes('打开设置步') &&
+      !/请调用\s*`?install_app`?/.test(setupMsg) &&
+      !/请调用\s*`?install_app`?/.test(String(toolsListDesc)) &&
+      !/call\s+(the\s+)?install_app\s+tool/i.test(String(toolsListDesc)),
+    { receipt: setup.receipt, open_setup_description: String(toolsListDesc).slice(0, 240) },
   );
 
   const sens = await callTool('translate_page', { source: 'mcp' }, 5);
