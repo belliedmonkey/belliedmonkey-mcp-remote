@@ -36,13 +36,6 @@ const ALLOWED_HOSTS = [
   'belliedmonkey-mcp-remote.belliedmonkey.workers.dev',
 ];
 
-const DEVICE_SESSION_ROUTES = [
-  '/api/mcp/device-sessions/register',
-  '/api/mcp/device-sessions/heartbeat',
-  '/api/mcp/device-sessions/bootstrap',
-  '/api/mcp/device-sessions/revoke',
-] as const;
-
 const defaultHandler = {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -95,12 +88,6 @@ const defaultHandler = {
 
 const apiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
-    if (isDeviceSessionsPath(url.pathname)) {
-      // Token already validated by OAuthProvider for apiRoute; still re-check Bearer
-      // inside handler so oauth_sub binds to device_session.
-      return handleDeviceSessions(request, env);
-    }
     const c = ctx as ExecutionContext & {
       props?: AuthProps;
       auth?: { scope?: string[]; token?: string };
@@ -135,7 +122,9 @@ const apiHandler = {
 };
 
 export default new OAuthProvider<Env>({
-  apiRoute: ['/mcp/v1', ...DEVICE_SESSION_ROUTES],
+  // Device-session paths stay on defaultHandler (unwrapToken).
+  // apiRoute resource is /mcp/v1 — cannot cover /api/* without widening resource (would break Grok paste URL).
+  apiRoute: '/mcp/v1',
   apiHandler,
   defaultHandler,
   authorizeEndpoint: '/authorize',
