@@ -117,7 +117,17 @@ async function getSession(
 }
 
 async function deleteSession(env: EnvLike, sub: string, deviceId: string): Promise<void> {
-  await env.OAUTH_KV.delete(kvKey(sub, deviceId));
+  // Prefer overwrite tombstone over bare delete: KV delete can lag on edge reads.
+  const tomb: DeviceSessionRecord = {
+    oauth_sub: sub,
+    device_id: deviceId,
+    platform: 'mac',
+    kind: 'pair',
+    last_seen: 0,
+    expires_at: 0,
+    device_cred_hash: '',
+  };
+  await env.OAUTH_KV.put(kvKey(sub, deviceId), JSON.stringify(tomb), { expirationTtl: 60 });
   const ids = (await readIdx(env, sub)).filter((id) => id !== deviceId);
   await writeIdx(env, sub, ids);
 }
