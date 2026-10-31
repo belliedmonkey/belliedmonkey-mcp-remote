@@ -121,6 +121,44 @@ const apiHandler = {
   },
 };
 
+/** BEL-151 ACCEPT-RD2: FREEZE App custom-scheme callbacks only (exact match). */
+const ALLOWED_PRIVATE_REDIRECT_URIS = new Set([
+  'belliedmonkey://oauth/mcp/callback',
+  'belliedmonkeycn://oauth/mcp/callback',
+]);
+
+function isHttpOrHttpsScheme(uri: string): boolean {
+  try {
+    const protocol = new URL(uri).protocol;
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Policy: with allowPrivateUseRedirectUris, library accepts any safe private-use scheme.
+ * Whitelist so only product FREEZE schemes register; https/loopback clients unchanged.
+ */
+function clientRegistrationCallback(options: {
+  clientMetadata: Record<string, unknown>;
+}): { code?: string; description?: string; status?: number } | void {
+  const raw = options.clientMetadata.redirect_uris;
+  const uris = Array.isArray(raw) ? raw.filter((u): u is string => typeof u === 'string') : [];
+  for (const uri of uris) {
+    const trimmed = uri.trim();
+    if (isHttpOrHttpsScheme(trimmed)) continue;
+    if (!ALLOWED_PRIVATE_REDIRECT_URIS.has(trimmed)) {
+      return {
+        code: 'invalid_client_metadata',
+        description:
+          'Private-use redirect_uri is not on the BelliedMonkey allowlist (belliedmonkey://oauth/mcp/callback or belliedmonkeycn://oauth/mcp/callback)',
+        status: 400,
+      };
+    }
+  }
+}
+
 export default new OAuthProvider<Env>({
   // Device-session paths stay on defaultHandler (unwrapToken).
   // apiRoute resource is /mcp/v1 — cannot cover /api/* without widening resource (would break Grok paste URL).
@@ -133,6 +171,9 @@ export default new OAuthProvider<Env>({
   scopesSupported: [...SCOPES],
   requiredScopes: ['mcp:read'],
   clientIdMetadataDocumentEnabled: true,
+  // BEL-151 ACCEPT-RD1/RD2: App FREEZE custom scheme DCR (RFC 8252 private-use).
+  allowPrivateUseRedirectUris: true,
+  clientRegistrationCallback,
   resourceMetadata: {
     // Must match the URL clients paste into Grok Connect Apps.
     resource: 'https://mcp.belliedmonkey.cc/mcp/v1',
