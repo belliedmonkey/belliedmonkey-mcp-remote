@@ -13,6 +13,8 @@ export interface Env {
   OAUTH_PROVIDER: import('@cloudflare/workers-oauth-provider').OAuthHelpers;
   MCP_RESOURCE_URL: string;
   ISSUER: string;
+  SUPABASE_URL: string;
+  SUPABASE_ANON_KEY: string;
 }
 
 type AuthProps = {
@@ -29,6 +31,7 @@ const SCOPES = ['mcp:read', 'mcp:write', 'offline_access'] as const;
 const ALLOWED_HOSTS = [
   'mcp.belliedmonkey.cc',
   'mcp.belliedmonkey.com',
+  'mcp-china.belliedmonkey.cc',
   'belliedmonkey-mcp-remote.belliedmonkey.workers.dev',
 ];
 
@@ -36,7 +39,7 @@ const defaultHandler = {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/authorize') {
-      return handleAuthorize(request, env.OAUTH_PROVIDER);
+      return handleAuthorize(request, env.OAUTH_PROVIDER, env);
     }
     if (url.pathname === '/' || url.pathname === '/health') {
       return Response.json(

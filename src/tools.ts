@@ -39,31 +39,34 @@ function hostFlavor(hostname: string, props: AuthProps): Flavor {
   return flavorFromHost(hostname);
 }
 
-function userNote(props: AuthProps): string {
-  const id = props.userId || props.email;
-  return id ? ` oauth_user=${id}` : '';
+/** Debug-only id; never splice into user-visible message. */
+function debugUser(props: AuthProps): string | undefined {
+  return props.userId || props.email || undefined;
 }
 
 export function registerTools(server: McpServer, hostname: string) {
   const props = authProps();
   const flavor = hostFlavor(hostname, props);
   const scheme = schemeForFlavor(flavor);
+  const dbg = debugUser(props);
 
   server.registerTool(
     'ready.check',
     {
       description:
-        'Report local readiness. Does not change settings, permissions, or the study library. Gaps use the frozen failure codes inside message. The receipt has no page text.',
+        'Report local readiness. Does not change settings, permissions, or the study library. Gaps use the frozen failure codes in fix.gap (not only the message). The receipt has no page text. Does not open the mic or claim listen-translate is connected.',
       inputSchema: z.object({ ...COMMON }),
     },
     async () => {
       // P1-a: no device bridge → honest gap need_app (never fake ready)
-      const message = `缺口 need_app${userNote(props)}`;
-      return mcpText(
-        receipt('ready.check', 'ok', message, {
-          open_setup: setupLink(scheme, 'install_app'),
-        }),
-      );
+      const message =
+        '尚未检测到本机大肚猴 App（或设备尚未就绪）。请先安装或打开「大肚猴翻译」，再检查一次。这不代表听译已经接通。';
+      const fix: Record<string, string> = {
+        gap: 'need_app',
+        open_setup: setupLink(scheme, 'install_app'),
+      };
+      if (dbg) fix.debug_oauth_user = dbg;
+      return mcpText(receipt('ready.check', 'ok', message, fix));
     },
   );
 
@@ -71,7 +74,7 @@ export function registerTools(server: McpServer, hostname: string) {
     'open_setup',
     {
       description:
-        'Open the existing setup step. Optional step: install_app, install_ext, login, packs, mic, engine.',
+        'Open on-device BelliedMonkey settings or install guidance (deep link). Optional step is a setup-step query parameter (not a separate tool): install_app, install_ext, login, packs, mic, engine. Do not invent or call a tool named install_app.',
       inputSchema: z.object({
         ...COMMON,
         step: z.enum(['install_app','install_ext','login','packs','mic','engine']).optional(),
@@ -80,12 +83,15 @@ export function registerTools(server: McpServer, hostname: string) {
     async ({ step }) => {
       const s = (step || 'install_app') as string;
       if (!(SETUP_STEPS as readonly string[]).includes(s)) {
-        return mcpText(receipt('open_setup', 'bad_request', `非法 step: ${s}`));
+        return mcpText(receipt('open_setup', 'bad_request', `非法设置步骤：${s}`));
       }
       const link = setupLink(scheme, s as SetupStep);
+      const message =
+        '请在本机打开大肚猴设置（安装或启用 App）。若链接无法点开，请复制后在 Safari/Chrome 打开，或前往 https://belliedmonkey.cc/for-agents';
       return mcpText(
-        receipt('open_setup', 'ok', `打开设置步 ${s}`, {
+        receipt('open_setup', 'ok', message, {
           open_setup: link,
+          step: s,
         }),
       );
     },
@@ -104,57 +110,57 @@ export function registerTools(server: McpServer, hostname: string) {
     {
       name: 'start_live_subtitles',
       description:
-        'Open the live-subtitle surface after the user confirms. Does not start the microphone. Optional video_lang and my_lang.',
+        'Request the live-subtitle surface. Requires on-device confirmation; does not start the microphone in the cloud. Optional video_lang and my_lang.',
       inputSchema: z.object({
         ...COMMON,
         video_lang: z.string().optional(),
         my_lang: z.string().optional(),
       }),
       code: 'need_confirm',
-      message: '需在本机 App 确认后打开字幕面；云端不开麦',
+      message: '打开实时字幕须在本机 App 确认；云端不会开麦，也不会假装已接通听译。',
       step: 'mic',
     },
     {
       name: 'translate_page',
       description:
-        'Ask the extension to translate the current page after the user confirms. App-only calls return need_ext. Optional url is a hint, not a fetch.',
+        'Ask the on-device extension or App to translate the current page after the user confirms. The cloud does not read the page. App-only calls return need_ext. Optional url is a hint, not a fetch.',
       inputSchema: z.object({
         ...COMMON,
         url: z.string().optional(),
       }),
       code: 'need_app',
-      message: '页译须本机扩展/App；云端不读页、不标成功译页',
+      message: '页译须本机扩展或 App 确认后执行；云端不读当前页，也不会标为已成功译页。',
       step: 'install_ext',
     },
     {
       name: 'translate_video_captions',
       description:
-        'Ask the extension for in-page video captions after the user confirms. Unsupported sites return site_unsupported. Optional url is a hint, not a fetch.',
+        'Ask the on-device extension for in-page video captions after the user confirms. The cloud does not fetch the page. Unsupported sites return site_unsupported. Optional url is a hint, not a fetch.',
       inputSchema: z.object({
         ...COMMON,
         url: z.string().optional(),
       }),
       code: 'need_app',
-      message: '视频字幕须本机扩展；云端不抓页',
+      message: '视频字幕须本机扩展确认后执行；云端不抓取页面，也不会标为已出字幕。',
       step: 'install_ext',
     },
     {
       name: 'capture_to_study',
       description:
-        'Save a sentence to the study library after the user confirms. Requires text or quote (or a paste on the confirm card). The receipt does not echo the sentence.',
+        'Save a sentence to the study library after the user confirms on device. Requires text or quote (or a paste on the confirm card). The cloud does not write the library; the receipt does not echo the sentence.',
       inputSchema: z.object({
         ...COMMON,
         text: z.string().optional(),
         quote: z.string().optional(),
       }),
       code: 'need_confirm',
-      message: '写入学习库须本机确认；云端不写库、回执无句子',
+      message: '写入学习库须在本机确认；云端不会写库，回执也不含句子正文。',
       step: 'install_app',
     },
     {
       name: 'explain_or_drill',
       description:
-        'Explain or lightly drill a sentence after the user confirms. mode is explain or drill (default explain). The receipt does not echo the sentence.',
+        'Explain or lightly drill a sentence after the user confirms on device. mode is explain or drill (default explain). The cloud does not parse the sentence; the receipt does not echo it.',
       inputSchema: z.object({
         ...COMMON,
         text: z.string().optional(),
@@ -162,7 +168,7 @@ export function registerTools(server: McpServer, hostname: string) {
         mode: z.enum(['explain', 'drill']).optional(),
       }),
       code: 'need_confirm',
-      message: '讲解/操练须本机确认；云端不做解析、回执无句子',
+      message: '讲解或操练须在本机确认；云端不做解析，回执也不含句子正文。',
       step: 'install_app',
     },
   ];
