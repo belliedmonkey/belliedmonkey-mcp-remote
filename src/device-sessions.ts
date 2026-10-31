@@ -131,12 +131,18 @@ export async function getFreshBridge(
   if (!oauthSub) return { up: false };
   const ids = await readIdx(env, oauthSub);
   let best: DeviceSessionRecord | null = null;
+  const alive: string[] = [];
   for (const id of ids) {
     const rec = await getSession(env, oauthSub, id);
     if (!rec) continue;
     if (!ALLOWED_PLATFORMS.has(rec.platform)) continue;
     if (rec.expires_at <= now) continue;
+    alive.push(id);
     if (!best || rec.last_seen > best.last_seen) best = rec;
+  }
+  // Prune idx when sessions missing/expired (best-effort; KV eventual consistency may lag)
+  if (alive.length !== ids.length) {
+    try { await writeIdx(env, oauthSub, alive); } catch { /* ignore */ }
   }
   if (!best) return { up: false };
   return {
