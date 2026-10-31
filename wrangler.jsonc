@@ -8,7 +8,9 @@
   "preview_urls": false,
   "vars": {
     "MCP_RESOURCE_URL": "https://mcp.belliedmonkey.cc/mcp/v1",
-    "ISSUER": "https://mcp.belliedmonkey.cc"
+    "ISSUER": "https://mcp.belliedmonkey.cc",
+    "SUPABASE_URL": "https://cavezcufztzqsohpjmup.supabase.co",
+    "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhdmV6Y3VmenR6cXNvaHBqbXVwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4MTczNTAsImV4cCI6MjEwMTM5MzM1MH0.VdL1B_jYLySEkhecL6WHOLV_vYbnRItpciFx7ZSxO4M"
   },
   "kv_namespaces": [
     {

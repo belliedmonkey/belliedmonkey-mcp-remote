@@ -60,10 +60,20 @@ export function schemeForFlavor(flavor: Flavor): string {
   return flavor === 'china' ? 'belliedmonkeycn' : 'belliedmonkey';
 }
 
-export function flavorFromHost(hostname: string): Flavor {
+export function flavorFromHost(hostname: string, headers?: Headers): Flavor {
   const h = (hostname || '').toLowerCase();
-  // china = .com (not .cc); intl = .cc (and workers.dev default)
-  if (h === 'mcp.belliedmonkey.com' || h.endsWith('.belliedmonkey.com')) {
+  const xf = (headers?.get('x-forwarded-host') || '').toLowerCase();
+  const flavorHdr = (headers?.get('x-bm-flavor') || '').toLowerCase();
+  // BEL-151 A2: EdgeOne/Lighthouse mid host mcp-china.*.cc + X-Forwarded-Host=.com
+  if (
+    flavorHdr === 'china' ||
+    xf === 'mcp.belliedmonkey.com' ||
+    xf.endsWith('.belliedmonkey.com') ||
+    h === 'mcp.belliedmonkey.com' ||
+    h.endsWith('.belliedmonkey.com') ||
+    h === 'mcp-china.belliedmonkey.cc' ||
+    h.startsWith('mcp-china.')
+  ) {
     return 'china';
   }
   return 'intl';
