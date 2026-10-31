@@ -315,10 +315,29 @@ export async function handleAuthorize(
       }
 
       if (decision === 'deny') {
+        // BEL-151 consent-reject-landing: show COPY-LOCK interstitial, then finish OAuth deny redirect.
         const denied = await oauth.denyConsent(request, handle);
-        const headers = new Headers(denied.headers);
-        if (!headers.has('Location')) headers.set('Location', denied.redirectTo);
-        return new Response(null, { status: 302, headers });
+        const location =
+          denied.headers.get('Location') ||
+          denied.redirectTo ||
+          '/';
+        const safeLoc = escapeHtml(location);
+        const locJs = JSON.stringify(location);
+        const body = `
+  <h1>已拒绝连接</h1>
+  <p>已拒绝连接。可稍后再从「连接应用」重试。</p>
+  <p><a href="${safeLoc}">返回连接应用</a></p>
+  <meta http-equiv="refresh" content="2;url=${safeLoc}">
+  <script>setTimeout(function () { location.replace(${locJs}); }, 2000);</script>`;
+        const res = page('已拒绝连接', body);
+        const headers = new Headers(res.headers);
+        denied.headers.forEach((v, k) => {
+          if (k.toLowerCase() === 'set-cookie') headers.append(k, v);
+          else if (k.toLowerCase() === 'location') {
+            /* keep HTML; client follows meta/script/link */
+          } else if (!headers.has(k)) headers.set(k, v);
+        });
+        return new Response(res.body, { status: 200, headers });
       }
 
       if (action === 'login' || action === 'signup') {

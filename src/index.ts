@@ -6,6 +6,7 @@ import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-prov
 import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler, getMcpAuthContext } from 'agents/mcp/server';
 import { handleAuthorize } from './authorize';
+import { flavorFromHost } from './receipt';
 import { registerTools } from './tools';
 
 export interface Env {
@@ -42,12 +43,19 @@ const defaultHandler = {
       return handleAuthorize(request, env.OAUTH_PROVIDER, env);
     }
     if (url.pathname === '/' || url.pathname === '/health') {
+      // BEL-151 com-health-meta: health metadata must follow the public host
+      // flavor. China (.com via edge) stays honest .com; intl stays env.ISSUER (.cc).
+      const flavor = flavorFromHost(url.hostname, request.headers);
+      const publicOrigin =
+        flavor === 'china'
+          ? 'https://mcp.belliedmonkey.com'
+          : env.ISSUER || 'https://mcp.belliedmonkey.cc';
       return Response.json(
         {
           service: 'belliedmonkey-mcp-remote',
           track: 'BEL-151-P1-a',
-          mcp: env.MCP_RESOURCE_URL || `${url.origin}/mcp/v1`,
-          issuer: env.ISSUER || url.origin,
+          mcp: `${publicOrigin}/mcp/v1`,
+          issuer: publicOrigin,
           tools: [
             'ready.check',
             'open_setup',
