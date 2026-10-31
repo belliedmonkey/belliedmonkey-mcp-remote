@@ -6,7 +6,7 @@
 import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
 import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler, getMcpAuthContext } from 'agents/mcp/server';
-import { handleAuthorize } from './authorize';
+import { handleAuthorize, handleIdpCallback } from './authorize';
 import { flavorFromHost } from './receipt';
 import { registerTools } from './tools';
 import { handleDeviceSessions, isDeviceSessionsPath } from './device-sessions';
@@ -41,6 +41,9 @@ const defaultHandler = {
     const url = new URL(request.url);
     if (url.pathname === '/authorize') {
       return handleAuthorize(request, env.OAUTH_PROVIDER, env);
+    }
+    if (url.pathname === '/authorize/idp/callback') {
+      return handleIdpCallback(request, env);
     }
     // Device bridge APIs also accepted here (Bearer validated inside) for hosts
     // that hit defaultHandler; primary path is apiRoute list below.
