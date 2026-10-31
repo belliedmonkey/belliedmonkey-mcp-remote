@@ -71,6 +71,29 @@ function json(status: number, body: unknown): Response {
   });
 }
 
+/** GAP-1: device-sessions sit on defaultHandler (bypass MCP withCors). Echo Origin incl. literal "null" (file:// App). */
+function applyCors(request: Request, response: Response): Response {
+  const origin = request.headers.get('Origin');
+  const headers = new Headers(response.headers);
+  headers.set('Vary', 'Origin');
+  headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'authorization, content-type');
+  headers.set('Access-Control-Max-Age', '86400');
+  // Origin present (including the string "null") → echo; omit ACAO only when header absent.
+  if (origin !== null) {
+    headers.set('Access-Control-Allow-Origin', origin);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function preflight(request: Request): Response {
+  return applyCors(request, new Response(null, { status: 204 }));
+}
+
 async function readIdx(env: EnvLike, sub: string): Promise<string[]> {
   const raw = await env.OAUTH_KV.get(idxKey(sub));
   if (!raw) return [];
@@ -195,6 +218,18 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
 }
 
 export async function handleDeviceSessions(
+  request: Request,
+  env: EnvLike,
+): Promise<Response> {
+  // CORS preflight for App WKWebView (file:// → Origin: null)
+  if (request.method === 'OPTIONS') {
+    return preflight(request);
+  }
+  const inner = await handleDeviceSessionsPost(request, env);
+  return applyCors(request, inner);
+}
+
+async function handleDeviceSessionsPost(
   request: Request,
   env: EnvLike,
 ): Promise<Response> {
