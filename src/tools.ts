@@ -12,6 +12,7 @@ import {
   schemeForFlavor,
   setupLink,
 } from './receipt';
+import { getFreshBridge, type BridgeView } from './device-sessions';
 
 const COMMON = {
   source: z.enum(['agent', 'mcp', 'deeplink', 'web', 'ext']).optional(),
@@ -29,6 +30,13 @@ type AuthProps = {
   name?: string;
 };
 
+type EnvLike = {
+  OAUTH_KV: KVNamespace;
+  OAUTH_PROVIDER: import('@cloudflare/workers-oauth-provider').OAuthHelpers;
+  MCP_RESOURCE_URL: string;
+  ISSUER: string;
+};
+
 function authProps(): AuthProps {
   const ctx = getMcpAuthContext();
   return (ctx?.props as AuthProps) || {};
@@ -44,7 +52,14 @@ function debugUser(props: AuthProps): string | undefined {
   return props.userId || props.email || undefined;
 }
 
-export function registerTools(server: McpServer, hostname: string) {
+function bridgeFix(bridge: BridgeView): Record<string, string> {
+  const fix: Record<string, string> = {};
+  if (bridge.up && bridge.platform) fix.device = bridge.platform;
+  if (bridge.up && bridge.last_seen != null) fix.last_seen = String(bridge.last_seen);
+  return fix;
+}
+
+export function registerTools(server: McpServer, hostname: string, env: EnvLike) {
   const props = authProps();
   const flavor = hostFlavor(hostname, props);
   const scheme = schemeForFlavor(flavor);
@@ -58,12 +73,23 @@ export function registerTools(server: McpServer, hostname: string) {
       inputSchema: z.object({ ...COMMON }),
     },
     async () => {
-      // P1-a: no device bridge → honest gap need_app (never fake ready)
+      const bridge = await getFreshBridge(env, props.userId);
+      if (!bridge.up) {
+        // No bridge / expired / unpaired → honest need_app (P1-a + ACCEPT-D2)
+        const message =
+          '尚未检测到本机大肚猴 App（或设备尚未就绪）。请先安装或打开「大肚猴翻译」，再检查一次。这不代表听译已经接通。';
+        const fix: Record<string, string> = {
+          gap: 'need_app',
+          open_setup: setupLink(scheme, 'install_app'),
+        };
+        if (dbg) fix.debug_oauth_user = dbg;
+        return mcpText(receipt('ready.check', 'ok', message, fix));
+      }
+      // Bridge UP: clear ONLY need_app-from-no-bridge. Never claim listen-translate ready / full D3.
       const message =
-        '尚未检测到本机大肚猴 App（或设备尚未就绪）。请先安装或打开「大肚猴翻译」，再检查一次。这不代表听译已经接通。';
+        '本机 App 已连通（设备桥可达）。其他缺口请在本机查看。这不代表听译已经接通，也不代表全部就绪。';
       const fix: Record<string, string> = {
-        gap: 'need_app',
-        open_setup: setupLink(scheme, 'install_app'),
+        ...bridgeFix(bridge),
       };
       if (dbg) fix.debug_oauth_user = dbg;
       return mcpText(receipt('ready.check', 'ok', message, fix));
@@ -97,14 +123,15 @@ export function registerTools(server: McpServer, hostname: string) {
     },
   );
 
-  // Five sensitive tools: P1-a returns need_confirm/need_app + deeplink only.
-  // Never claim cloud translated a page or started the mic.
+  // Five sensitive tools:
+  // bridge DOWN → need_app + deeplink (honest; no side effects)
+  // bridge UP  → need_confirm + deeplink (pull on-device confirm; never auto-execute)
   const sensitive: Array<{
     name: (typeof ACTIONS)[number];
     description: string;
     inputSchema: z.ZodObject<z.ZodRawShape>;
-    code: 'need_confirm' | 'need_app';
-    message: string;
+    messageDown: string;
+    messageUp: string;
     step: SetupStep;
   }> = [
     {
@@ -116,8 +143,8 @@ export function registerTools(server: McpServer, hostname: string) {
         video_lang: z.string().optional(),
         my_lang: z.string().optional(),
       }),
-      code: 'need_confirm',
-      message: '打开实时字幕须在本机 App 确认；云端不会开麦，也不会假装已接通听译。',
+      messageDown: '打开实时字幕须本机 App 可达并确认；当前未检测到设备桥。云端不会开麦，也不会假装已接通听译。',
+      messageUp: '打开实时字幕须在本机 App 确认；云端不会开麦，也不会假装已接通听译。',
       step: 'mic',
     },
     {
@@ -128,8 +155,8 @@ export function registerTools(server: McpServer, hostname: string) {
         ...COMMON,
         url: z.string().optional(),
       }),
-      code: 'need_app',
-      message: '页译须本机扩展或 App 确认后执行；云端不读当前页，也不会标为已成功译页。',
+      messageDown: '页译须本机扩展或 App 可达并确认；当前未检测到设备桥。云端不读当前页，也不会标为已成功译页。',
+      messageUp: '页译须本机扩展或 App 确认后执行；云端不读当前页，也不会标为已成功译页。',
       step: 'install_ext',
     },
     {
@@ -140,8 +167,8 @@ export function registerTools(server: McpServer, hostname: string) {
         ...COMMON,
         url: z.string().optional(),
       }),
-      code: 'need_app',
-      message: '视频字幕须本机扩展确认后执行；云端不抓取页面，也不会标为已出字幕。',
+      messageDown: '视频字幕须本机扩展可达并确认；当前未检测到设备桥。云端不抓取页面，也不会标为已出字幕。',
+      messageUp: '视频字幕须本机扩展确认后执行；云端不抓取页面，也不会标为已出字幕。',
       step: 'install_ext',
     },
     {
@@ -153,8 +180,8 @@ export function registerTools(server: McpServer, hostname: string) {
         text: z.string().optional(),
         quote: z.string().optional(),
       }),
-      code: 'need_confirm',
-      message: '写入学习库须在本机确认；云端不会写库，回执也不含句子正文。',
+      messageDown: '写入学习库须本机 App 可达并确认；当前未检测到设备桥。云端不会写库，回执也不含句子正文。',
+      messageUp: '写入学习库须在本机确认；云端不会写库，回执也不含句子正文。',
       step: 'install_app',
     },
     {
@@ -167,8 +194,8 @@ export function registerTools(server: McpServer, hostname: string) {
         quote: z.string().optional(),
         mode: z.enum(['explain', 'drill']).optional(),
       }),
-      code: 'need_confirm',
-      message: '讲解或操练须在本机确认；云端不做解析，回执也不含句子正文。',
+      messageDown: '讲解或操练须本机 App 可达并确认；当前未检测到设备桥。云端不做解析，回执也不含句子正文。',
+      messageUp: '讲解或操练须在本机确认；云端不做解析，回执也不含句子正文。',
       step: 'install_app',
     },
   ];
@@ -177,12 +204,24 @@ export function registerTools(server: McpServer, hostname: string) {
     server.registerTool(
       t.name,
       { description: t.description, inputSchema: t.inputSchema },
-      async () =>
-        mcpText(
-          receipt(t.name, t.code, t.message, {
+      async () => {
+        const bridge = await getFreshBridge(env, props.userId);
+        if (!bridge.up) {
+          return mcpText(
+            receipt(t.name, 'need_app', t.messageDown, {
+              open_setup: setupLink(scheme, t.step),
+              gap: 'need_app',
+            }),
+          );
+        }
+        // Bridge UP → need_confirm + deeplink; NO side effects before on-device confirm
+        return mcpText(
+          receipt(t.name, 'need_confirm', t.messageUp, {
             open_setup: setupLink(scheme, t.step),
+            ...bridgeFix(bridge),
           }),
-        ),
+        );
+      },
     );
   }
 

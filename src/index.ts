@@ -1,6 +1,7 @@
 /**
  * BEL-151 P1-a · BelliedMonkey Remote MCP
  * Single Worker: OAuthProvider (AS+RS) + createMcpHandler at /mcp/v1
+ * + device bridge /api/mcp/device-sessions/* (BEL-151 device-bridge P0)
  */
 import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
 import { McpServer } from '@modelcontextprotocol/server';
@@ -8,6 +9,7 @@ import { createMcpHandler, getMcpAuthContext } from 'agents/mcp/server';
 import { handleAuthorize } from './authorize';
 import { flavorFromHost } from './receipt';
 import { registerTools } from './tools';
+import { handleDeviceSessions, isDeviceSessionsPath } from './device-sessions';
 
 export interface Env {
   OAUTH_KV: KVNamespace;
@@ -25,8 +27,6 @@ type AuthProps = {
   name?: string;
 };
 
-type ApiCtx = ExecutionContext;
-
 const SCOPES = ['mcp:read', 'mcp:write', 'offline_access'] as const;
 
 const ALLOWED_HOSTS = [
@@ -36,11 +36,23 @@ const ALLOWED_HOSTS = [
   'belliedmonkey-mcp-remote.belliedmonkey.workers.dev',
 ];
 
+const DEVICE_SESSION_ROUTES = [
+  '/api/mcp/device-sessions/register',
+  '/api/mcp/device-sessions/heartbeat',
+  '/api/mcp/device-sessions/bootstrap',
+  '/api/mcp/device-sessions/revoke',
+] as const;
+
 const defaultHandler = {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/authorize') {
       return handleAuthorize(request, env.OAUTH_PROVIDER, env);
+    }
+    // Device bridge APIs also accepted here (Bearer validated inside) for hosts
+    // that hit defaultHandler; primary path is apiRoute list below.
+    if (isDeviceSessionsPath(url.pathname)) {
+      return handleDeviceSessions(request, env);
     }
     if (url.pathname === '/' || url.pathname === '/health') {
       // BEL-151 com-health-meta: health metadata must follow the public host
@@ -65,6 +77,12 @@ const defaultHandler = {
             'capture_to_study',
             'explain_or_drill',
           ],
+          device_bridge: {
+            register: `${publicOrigin}/api/mcp/device-sessions/register`,
+            heartbeat: `${publicOrigin}/api/mcp/device-sessions/heartbeat`,
+            bootstrap: `${publicOrigin}/api/mcp/device-sessions/bootstrap`,
+            revoke: `${publicOrigin}/api/mcp/device-sessions/revoke`,
+          },
           note:
             'Remote MCP orchestration only. Page translate / live-subtitle side effects stay on the local App/extension. Do not claim Grok D3 until VERIFY passes.',
         },
@@ -77,6 +95,12 @@ const defaultHandler = {
 
 const apiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    if (isDeviceSessionsPath(url.pathname)) {
+      // Token already validated by OAuthProvider for apiRoute; still re-check Bearer
+      // inside handler so oauth_sub binds to device_session.
+      return handleDeviceSessions(request, env);
+    }
     const c = ctx as ExecutionContext & {
       props?: AuthProps;
       auth?: { scope?: string[]; token?: string };
@@ -93,7 +117,7 @@ const apiHandler = {
           version: '0.1.0-p1a',
         });
         void getMcpAuthContext();
-        registerTools(server, hostname);
+        registerTools(server, hostname, env);
         return server;
       },
       {
@@ -111,7 +135,7 @@ const apiHandler = {
 };
 
 export default new OAuthProvider<Env>({
-  apiRoute: '/mcp/v1',
+  apiRoute: ['/mcp/v1', ...DEVICE_SESSION_ROUTES],
   apiHandler,
   defaultHandler,
   authorizeEndpoint: '/authorize',
