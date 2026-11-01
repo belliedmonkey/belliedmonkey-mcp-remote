@@ -11,7 +11,9 @@ Public Streamable HTTP MCP for [大肚猴翻译](https://belliedmonkey.cc) / [Ch
 
 - OAuth (Cloudflare Workers OAuth Provider) → Grok / MCP clients show **已连接**
 - Seven W2 tools (same schema as local stdio): `ready.check`, `open_setup`, `start_live_subtitles`, `translate_page`, `translate_video_captions`, `capture_to_study`, `explain_or_drill`
-- Cloud side **orchestrates only**. Page translate / live subtitles / mic side effects stay on the **local App or extension**. Sensitive tools return `need_confirm` / `need_app` + `fix.open_setup` deeplink.
+- Cloud side **orchestrates only**. Page translate / live subtitles / mic side effects stay on the **local App or extension**. Sensitive tools return `need_confirm` / `need_app` + a deeplink.
+  - `start_live_subtitles` `need_confirm` uses the **action deep link** `belliedmonkey://agent/v1/start_live_subtitles?source=mcp&video_lang=…&my_lang=…` (CN: `belliedmonkeycn://…`) in `fix.action_deeplink` and, for compatibility, in `fix.open_setup`. It is **never** `open_setup?step=mic`.
+  - Other sensitive tools keep `fix.open_setup` pointing at their setup step.
 
 ## What this is not
 

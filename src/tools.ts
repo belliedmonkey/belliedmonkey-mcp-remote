@@ -8,6 +8,7 @@ import {
   type SetupStep,
   flavorFromHost,
   mcpText,
+  actionLink,
   receipt,
   schemeForFlavor,
   setupLink,
@@ -133,6 +134,8 @@ export function registerTools(server: McpServer, hostname: string, env: EnvLike)
     messageDown: string;
     messageUp: string;
     step: SetupStep;
+    /** need_confirm fix must be this action's own deep link, not a setup step. */
+    actionDeeplink?: boolean;
   }> = [
     {
       name: 'start_live_subtitles',
@@ -145,7 +148,9 @@ export function registerTools(server: McpServer, hostname: string, env: EnvLike)
       }),
       messageDown: '打开实时字幕须本机 App 可达并确认；当前未检测到设备桥。云端不会开麦，也不会假装已接通听译。',
       messageUp: '打开实时字幕须在本机 App 确认；云端不会开麦，也不会假装已接通听译。',
-      step: 'mic',
+      // BEL-151: bridge DOWN is an App-availability gap, not a microphone gap.
+      step: 'install_app',
+      actionDeeplink: true,
     },
     {
       name: 'translate_page',
@@ -204,7 +209,7 @@ export function registerTools(server: McpServer, hostname: string, env: EnvLike)
     server.registerTool(
       t.name,
       { description: t.description, inputSchema: t.inputSchema },
-      async () => {
+      async (args: unknown) => {
         const bridge = await getFreshBridge(env, props.userId);
         if (!bridge.up) {
           return mcpText(
@@ -215,12 +220,25 @@ export function registerTools(server: McpServer, hostname: string, env: EnvLike)
           );
         }
         // Bridge UP → need_confirm + deeplink; NO side effects before on-device confirm
-        return mcpText(
-          receipt(t.name, 'need_confirm', t.messageUp, {
-            open_setup: setupLink(scheme, t.step),
-            ...bridgeFix(bridge),
-          }),
-        );
+        const fix: Record<string, string> = { ...bridgeFix(bridge) };
+        if (t.actionDeeplink) {
+          const a = (args && typeof args === 'object' ? args : {}) as {
+            video_lang?: unknown;
+            my_lang?: unknown;
+          };
+          const link = actionLink(scheme, 'start_live_subtitles', {
+            video_lang: typeof a.video_lang === 'string' ? a.video_lang : undefined,
+            my_lang: typeof a.my_lang === 'string' ? a.my_lang : undefined,
+          });
+          // Historical key name kept for clients that read fix.open_setup; the
+          // value is now the action deep link, never open_setup?step=mic.
+          fix.open_setup = link;
+          fix.action = t.name;
+          fix.action_deeplink = link;
+        } else {
+          fix.open_setup = setupLink(scheme, t.step);
+        }
+        return mcpText(receipt(t.name, 'need_confirm', t.messageUp, fix));
       },
     );
   }
