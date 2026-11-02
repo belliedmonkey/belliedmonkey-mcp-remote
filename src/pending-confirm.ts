@@ -216,6 +216,8 @@ export async function decidePending(
     pending_id: string;
     device_id: string;
     decision: PendingDecision;
+    /** A: store a confirmation-only receipt (never openedSubtitles). */
+    confirmOnly?: boolean;
     now?: number;
   },
 ): Promise<DecideOutcome> {
@@ -235,23 +237,18 @@ export async function decidePending(
   rec.status = opts.decision === 'allow' ? 'allowed' : 'denied';
   rec.decision = opts.decision;
   rec.decided_at = now;
-  rec.result = buildResumeReceipt(rec);
+  rec.result = opts.confirmOnly ? elicitConfirmReceipt(rec) : buildResumeReceipt(rec);
   await storePending(env, rec, now);
   return { ok: true, record: rec };
 }
 
 /**
- * A (elicitation) is a confirmation channel only in this slice: mark the
- * pending allowed but persist a receipt that does NOT claim the local surface.
- * A later replay with the same pending_id therefore still returns
- * openedSubtitles:false.
+ * A (elicitation) is a confirmation channel only in this slice: this receipt
+ * never claims the local surface. Persisted atomically by decidePending with
+ * `confirmOnly:true`, so a replay with the same pending_id stays honest.
  */
-export async function markElicitConfirmed(
-  env: EnvLike,
-  rec: PendingRecord,
-  now = Date.now(),
-): Promise<Receipt> {
-  const result = receipt(
+function elicitConfirmReceipt(rec: PendingRecord): Receipt {
+  return receipt(
     rec.action,
     'ok',
     '已通过 MCP elicitation 确认；字幕表面仍须本机 App 执行（A 未证正路，未开麦）。',
@@ -262,9 +259,6 @@ export async function markElicitConfirmed(
       elicit: 'accept',
     },
   );
-  rec.result = result;
-  await storePending(env, rec, now);
-  return result;
 }
 
 /** Revoke every still-pending record for one device (revoke / bridge DOWN). */

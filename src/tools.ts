@@ -21,7 +21,6 @@ import {
   decidePending,
   gcPending,
   getPending,
-  markElicitConfirmed,
   revokeAllPending,
   type PendingRecord,
 } from './pending-confirm';
@@ -388,9 +387,10 @@ export function registerTools(server: McpServer, hostname: string, env: EnvLike)
                   pending_id: pending.pending_id,
                   device_id: bridge.device_id as string,
                   decision: 'allow',
+                  confirmOnly: true,
                 });
-                if (decided.ok) {
-                  return mcpText(await markElicitConfirmed(env, decided.record));
+                if (decided.ok && decided.record.result) {
+                  return mcpText(decided.record.result);
                 }
               }
               if (res?.action === 'decline' || res?.action === 'cancel') {
