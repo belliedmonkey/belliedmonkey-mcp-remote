@@ -88,7 +88,15 @@ export function registerTools(server: McpServer, hostname: string, env: EnvLike)
     async () => {
       const bridge = await getFreshBridge(env, props.userId);
       if (!bridge.up) {
-        // No bridge / expired / unpaired → honest need_app (P1-a + ACCEPT-D2)
+        // No bridge / expired / unpaired → honest need_app (P1-a + ACCEPT-D2).
+        // GAP-2: a detected bridge DOWN invalidates still-pending confirms.
+        if (props.userId) {
+          try {
+            await revokeAllPending(env, props.userId);
+          } catch {
+            /* best effort; never fake success */
+          }
+        }
         const message =
           '尚未检测到本机大肚猴 App（或设备尚未就绪）。请先安装或打开「大肚猴翻译」，再检查一次。这不代表听译已经接通。';
         const fix: Record<string, string> = {
