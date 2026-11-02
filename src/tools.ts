@@ -21,6 +21,7 @@ import {
   decidePending,
   gcPending,
   getPending,
+  markElicitConfirmed,
   revokeAllPending,
   type PendingRecord,
 } from './pending-confirm';
@@ -381,19 +382,7 @@ export function registerTools(server: McpServer, hostname: string, env: EnvLike)
                   decision: 'allow',
                 });
                 if (decided.ok) {
-                  const base = decided.record.result ?? buildResumeReceipt(decided.record);
-                  return mcpText({
-                    ...base,
-                    code: 'ok',
-                    message:
-                      '已通过 MCP elicitation 确认；字幕表面仍须本机 App 执行（A 未证正路，未开麦）。',
-                    fix: {
-                      ...base.fix,
-                      openedSubtitles: false,
-                      micStarted: false,
-                      elicit: 'accept',
-                    },
-                  });
+                  return mcpText(await markElicitConfirmed(env, decided.record));
                 }
               }
               if (res?.action === 'decline' || res?.action === 'cancel') {

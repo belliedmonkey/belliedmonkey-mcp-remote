@@ -53,6 +53,9 @@ export async function captureInitialize(
   if (!oauthSub) return null;
   const contentType = (request.headers.get('content-type') || '').toLowerCase();
   if (!contentType.includes('application/json')) return null;
+  // Avoid buffering an oversized body just to look for initialize.
+  const declaredLen = Number(request.headers.get('content-length') || 0);
+  if (Number.isFinite(declaredLen) && declaredLen > 256 * 1024) return null;
   let text: string;
   try {
     text = await request.clone().text();

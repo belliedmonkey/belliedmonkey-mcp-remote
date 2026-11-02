@@ -251,14 +251,17 @@ const aAccept = await live.cb({ source: 'mcp' }, ctx(async () => {
   return { action: 'accept', content: { confirm: true } };
 }));
 const aAcceptText = JSON.parse(aAccept.content[0].text);
+const aReplay = await live.cb({ pending_id: aAcceptText.fix.pending_id, source: 'mcp' }, ctx());
+const aReplayText = JSON.parse(aReplay.content[0].text);
 check(
   'A_accept_is_confirmation_only',
   elicited === 1 &&
     aAcceptText.code === 'ok' &&
     aAcceptText.fix.openedSubtitles === false &&
     aAcceptText.fix.micStarted === false &&
-    aAcceptText.fix.elicit === 'accept',
-  aAcceptText,
+    aAcceptText.fix.elicit === 'accept' &&
+    aReplayText.fix.openedSubtitles === false,
+  { accept: aAcceptText, replay: aReplayText },
 );
 
 const aDecline = await live.cb({ source: 'mcp' }, ctx(async () => {

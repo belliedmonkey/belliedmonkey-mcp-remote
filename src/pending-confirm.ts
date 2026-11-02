@@ -240,6 +240,33 @@ export async function decidePending(
   return { ok: true, record: rec };
 }
 
+/**
+ * A (elicitation) is a confirmation channel only in this slice: mark the
+ * pending allowed but persist a receipt that does NOT claim the local surface.
+ * A later replay with the same pending_id therefore still returns
+ * openedSubtitles:false.
+ */
+export async function markElicitConfirmed(
+  env: EnvLike,
+  rec: PendingRecord,
+  now = Date.now(),
+): Promise<Receipt> {
+  const result = receipt(
+    rec.action,
+    'ok',
+    '已通过 MCP elicitation 确认；字幕表面仍须本机 App 执行（A 未证正路，未开麦）。',
+    {
+      pending_id: rec.pending_id,
+      micStarted: false,
+      openedSubtitles: false,
+      elicit: 'accept',
+    },
+  );
+  rec.result = result;
+  await storePending(env, rec, now);
+  return result;
+}
+
 /** Revoke every still-pending record for one device (revoke / bridge DOWN). */
 export async function revokePendingForDevice(
   env: EnvLike,
