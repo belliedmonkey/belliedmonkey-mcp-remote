@@ -11,7 +11,8 @@
     "verify": "node scripts/verify.mjs",
     "test:confirm": "node scripts/confirm-selftest.mjs",
     "test:tools": "node scripts/tool-selftest.mjs",
-    "test": "node scripts/confirm-selftest.mjs && node scripts/tool-selftest.mjs"
+    "test": "node scripts/confirm-selftest.mjs && node scripts/tool-selftest.mjs",
+    "smoke:live": "node scripts/live-confirm-smoke.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.4",
