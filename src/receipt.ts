@@ -87,6 +87,7 @@ export function setupLink(scheme: string, step: SetupStep, source = 'mcp'): stri
 export type LangQuery = {
   video_lang?: string;
   my_lang?: string;
+  pending_id?: string;
 };
 
 /**
@@ -102,6 +103,9 @@ export function actionLink(
   const q = new URLSearchParams({ source: 'mcp' });
   if (query.video_lang) q.set('video_lang', String(query.video_lang));
   if (query.my_lang) q.set('my_lang', String(query.my_lang));
+  // BEL-151 GAP-2: bind the confirm card to the exact cloud pending record.
+  // This is appended to the action deep link; never add step=mic.
+  if (query.pending_id) q.set('pending_id', String(query.pending_id));
   return `${scheme}://agent/v1/${action}?${q.toString()}`;
 }
 
@@ -118,7 +122,8 @@ export type Receipt = {
   action: string;
   code: Code;
   message: string;
-  fix: Record<string, string>;
+  /** GAP-2 resume receipts carry booleans (openedSubtitles/micStarted); legacy keys stay strings. */
+  fix: Record<string, string | number | boolean>;
   receipt_id: string;
 };
 
@@ -126,7 +131,7 @@ export function receipt(
   action: string,
   code: Code,
   message: string,
-  fix: Record<string, string> = {},
+  fix: Record<string, string | number | boolean> = {},
 ): Receipt {
   if (!CODE_SET.has(code)) {
     throw new Error(`failure code outside §6: ${code}`);

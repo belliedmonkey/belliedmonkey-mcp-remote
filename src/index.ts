@@ -10,6 +10,7 @@ import { handleAuthorize, handleIdpCallback } from './authorize';
 import { flavorFromHost } from './receipt';
 import { registerTools } from './tools';
 import { handleDeviceSessions, isDeviceSessionsPath } from './device-sessions';
+import { captureInitialize } from './client-caps';
 
 export interface Env {
   OAUTH_KV: KVNamespace;
@@ -78,6 +79,7 @@ const defaultHandler = {
             heartbeat: `${publicOrigin}/api/mcp/device-sessions/heartbeat`,
             bootstrap: `${publicOrigin}/api/mcp/device-sessions/bootstrap`,
             revoke: `${publicOrigin}/api/mcp/device-sessions/revoke`,
+            confirm: `${publicOrigin}/api/mcp/device-sessions/confirm`,
           },
           note:
             'Remote MCP orchestration only. Page translate / live-subtitle side effects stay on the local App/extension. Do not claim Grok D3 until VERIFY passes.',
@@ -100,6 +102,13 @@ const apiHandler = {
       return insufficientScope(c.auth as never, ['mcp:read']);
     }
     const hostname = new URL(request.url).hostname;
+    // ACCEPT-PROBE: record initialize.capabilities (cloned body; never claim A
+    // supported when this record is absent or lacks elicitation).
+    try {
+      await captureInitialize(request, env, props.userId);
+    } catch {
+      /* probe is best-effort; never block MCP */
+    }
     const handler = createMcpHandler(
       () => {
         const server = new McpServer({
