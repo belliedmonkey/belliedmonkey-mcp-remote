@@ -84,6 +84,27 @@ export function setupLink(scheme: string, step: SetupStep, source = 'mcp'): stri
   return `${scheme}://agent/v1/open_setup?${q.toString()}`;
 }
 
+export type LangQuery = {
+  video_lang?: string;
+  my_lang?: string;
+};
+
+/**
+ * BEL-151 fix-start-live-deeplink: the need_confirm CTA for an action must be
+ * that action's own deep link, so the App opens the action confirm card. It must
+ * not be an open_setup?step=... link, which lands on a settings page.
+ */
+export function actionLink(
+  scheme: string,
+  action: 'start_live_subtitles',
+  query: LangQuery = {},
+): string {
+  const q = new URLSearchParams({ source: 'mcp' });
+  if (query.video_lang) q.set('video_lang', String(query.video_lang));
+  if (query.my_lang) q.set('my_lang', String(query.my_lang));
+  return `${scheme}://agent/v1/${action}?${q.toString()}`;
+}
+
 function newId(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
