@@ -4,6 +4,12 @@
  * Ban: claim listen-translate ready; Win/Android/Linux never UP.
  */
 import type { OAuthHelpers } from '@cloudflare/workers-oauth-provider';
+import {
+  PENDING_TTL_SEC,
+  decidePending,
+  gcPending,
+  revokePendingForDevice,
+} from './pending-confirm';
 
 export const DEVICE_TTL_PAIR_SEC = 900; // 15 min
 export const DEVICE_TTL_BOOTSTRAP_SEC = 300; // 5 min
@@ -335,6 +341,91 @@ async function handleDeviceSessionsPost(
     return json(200, { ok: true, device_cred, ttl_sec: ttl, kind: 'bootstrap' });
   }
 
+  if (path.endsWith('/confirm')) {
+    // BEL-151 GAP-2: App allow/deny callback. Auth = OAuth bearer + device_cred.
+    // Pending is bound to oauth_sub + device_id; cross-account/device is refused.
+    const pending_id = String(body.pending_id || '');
+    const decision = String(body.decision || '');
+    const device_id = String(body.device_id || '');
+    const device_cred = String(body.device_cred || '');
+    if (!pending_id || !decision || !device_id || !device_cred) {
+      return json(400, {
+        ok: false,
+        error: 'bad_request',
+        message: 'pending_id, decision, device_id and device_cred required',
+      });
+    }
+    if (decision !== 'allow' && decision !== 'deny') {
+      return json(400, { ok: false, error: 'bad_request', message: 'decision must be allow|deny' });
+    }
+    const sessionRec = await getSession(env, sub, device_id);
+    if (!sessionRec) {
+      return json(401, { ok: false, error: 'unauthorized', message: 'no_session' });
+    }
+    if (sessionRec.oauth_sub !== sub) {
+      return json(403, { ok: false, error: 'forbidden', message: 'cross_account' });
+    }
+    if (sessionRec.expires_at <= now) {
+      return json(401, { ok: false, error: 'unauthorized', message: 'session_expired' });
+    }
+    const credHash = await sha256Hex(device_cred);
+    if (credHash !== sessionRec.device_cred_hash) {
+      return json(401, { ok: false, error: 'unauthorized', message: 'bad_cred' });
+    }
+    await gcPending(env, sub, now);
+    const outcome = await decidePending(env, {
+      oauth_sub: sub,
+      pending_id,
+      device_id,
+      decision,
+      now,
+    });
+    if (!outcome.ok) {
+      const status =
+        outcome.error === 'cross_account' || outcome.error === 'cross_device'
+          ? 403
+          : outcome.error === 'already_decided'
+            ? 409
+            : outcome.error === 'pending_expired' || outcome.error === 'pending_revoked'
+              ? 410
+              : 404;
+      return json(status, {
+        ok: false,
+        error: outcome.error,
+        pending_id,
+        status:
+          outcome.error === 'pending_expired'
+            ? 'expired'
+            : outcome.error === 'pending_revoked'
+              ? 'revoked'
+              : undefined,
+        message:
+          outcome.error === 'cross_account' || outcome.error === 'cross_device'
+            ? 'pending is bound to another account/device'
+            : outcome.error,
+      });
+    }
+    const record = outcome.record;
+    const result = record.result;
+    return json(200, {
+      ok: true,
+      pending_id: record.pending_id,
+      status: record.status,
+      action: record.action,
+      expires_in_sec: Math.max(0, Math.ceil((record.expires_at - now) / 1000)),
+      ttl_sec: PENDING_TTL_SEC,
+      resumed: result
+        ? {
+            action: record.action,
+            code: result.code,
+            openedSubtitles: result.fix.openedSubtitles === true,
+            micStarted: false,
+            receipt: result,
+          }
+        : null,
+    });
+  }
+
   if (path.endsWith('/revoke')) {
     const device_id = String(body.device_id || '');
     const device_cred = String(body.device_cred || '');
@@ -354,8 +445,10 @@ async function handleDeviceSessionsPost(
       }
       await deleteSession(env, sub, device_id);
     }
+    // GAP-2: revoke invalidates this device's still-pending confirms.
+    const pending_revoked = await revokePendingForDevice(env, sub, device_id, now);
     // idempotent ok even if missing
-    return json(200, { ok: true, revoked: true });
+    return json(200, { ok: true, revoked: true, pending_revoked });
   }
 
   return json(404, { ok: false, error: 'not_found' });
@@ -367,6 +460,7 @@ export function isDeviceSessionsPath(pathname: string): boolean {
     p === '/api/mcp/device-sessions/register' ||
     p === '/api/mcp/device-sessions/heartbeat' ||
     p === '/api/mcp/device-sessions/bootstrap' ||
-    p === '/api/mcp/device-sessions/revoke'
+    p === '/api/mcp/device-sessions/revoke' ||
+    p === '/api/mcp/device-sessions/confirm'
   );
 }

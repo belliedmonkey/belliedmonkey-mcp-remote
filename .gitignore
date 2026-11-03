@@ -6,3 +6,6 @@ dist/
 .DS_Store
 .cf-deploy-token
 verify-out/
+
+.test-build/
+node_modules
