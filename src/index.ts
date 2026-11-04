@@ -228,6 +228,20 @@ export default {
       });
     }
     const provider = origin === COM_ORIGIN ? comProvider : ccProvider;
+    // The China edge forwards mcp.belliedmonkey.com to the mid-host
+    // mcp-china.belliedmonkey.cc. Present that request to the provider as the
+    // public .com origin so issuer, resource, path-PRM and the MCP challenge
+    // are all .com (the edge only rewrites the Host, not the OAuth metadata).
+    let providerRequest = request;
+    if (
+      origin === COM_ORIGIN &&
+      url.hostname.toLowerCase() !== new URL(COM_ORIGIN).hostname
+    ) {
+      const canonicalUrl = new URL(request.url);
+      canonicalUrl.protocol = 'https:';
+      canonicalUrl.host = new URL(COM_ORIGIN).host;
+      providerRequest = new Request(canonicalUrl.toString(), request);
+    }
     // OAuthProvider injects env.OAUTH_PROVIDER only when absent. Workers may
     // reuse the env object between requests, so a shared env would pin every
     // later request to whichever provider handled the first one (making .cc
@@ -235,6 +249,6 @@ export default {
     // copy so the correct helpers are installed per request.
     const providerEnv = { ...env };
     delete (providerEnv as Partial<Env>).OAUTH_PROVIDER;
-    return provider.fetch(request, providerEnv, ctx);
+    return provider.fetch(providerRequest, providerEnv, ctx);
   },
 };

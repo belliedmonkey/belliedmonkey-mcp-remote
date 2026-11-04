@@ -37,9 +37,9 @@ const hostCases = [
   ['mcp.belliedmonkey.cc', CC],
   ['mcp.belliedmonkey.com', COM],
   ['MCP.BELLIEDMONKEY.COM', COM],
-  // China mid-host keeps the historical .cc provider unless the request Host
-  // is actually .com (the edge preserves Host; see health-meta).
-  ['mcp-china.belliedmonkey.cc', CC],
+  // The China edge terminates .com and forwards to this mid-host (see
+  // /cdn-cgi/trace h=mcp-china.belliedmonkey.cc), so it is the .com origin.
+  ['mcp-china.belliedmonkey.cc', COM],
   ['belliedmonkey-mcp-remote.belliedmonkey.workers.dev', CC],
   ['localhost:8787', CC],
 ];
