@@ -3,7 +3,10 @@
  * Single Worker: OAuthProvider (AS+RS) + createMcpHandler at /mcp/v1
  * + device bridge /api/mcp/device-sessions/* (BEL-151 device-bridge P0)
  */
-import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
+import OAuthProvider, {
+  insufficientScope,
+  type OAuthProviderOptions,
+} from '@cloudflare/workers-oauth-provider';
 import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler, getMcpAuthContext } from 'agents/mcp/server';
 import { handleAuthorize, handleIdpCallback } from './authorize';
@@ -11,6 +14,13 @@ import { flavorFromHost } from './receipt';
 import { registerTools } from './tools';
 import { handleDeviceSessions, isDeviceSessionsPath } from './device-sessions';
 import { captureInitialize } from './client-caps';
+import {
+  CC_ORIGIN,
+  COM_ORIGIN,
+  originForHostname,
+  protectedResourceMetadataFor,
+  resourceMetadataFor,
+} from './origins';
 
 export interface Env {
   OAUTH_KV: KVNamespace;
@@ -171,24 +181,60 @@ function clientRegistrationCallback(options: {
   }
 }
 
-export default new OAuthProvider<Env>({
-  // Device-session paths stay on defaultHandler (unwrapToken).
-  // apiRoute resource is /mcp/v1 — cannot cover /api/* without widening resource (would break Grok paste URL).
-  apiRoute: '/mcp/v1',
-  apiHandler,
-  defaultHandler,
-  authorizeEndpoint: '/authorize',
-  tokenEndpoint: '/oauth/token',
-  clientRegistrationEndpoint: '/oauth/register',
-  scopesSupported: [...SCOPES],
-  requiredScopes: ['mcp:read'],
-  clientIdMetadataDocumentEnabled: true,
-  // BEL-151 ACCEPT-RD1/RD2: App FREEZE custom scheme DCR (RFC 8252 private-use).
-  allowPrivateUseRedirectUris: true,
-  clientRegistrationCallback,
-  resourceMetadata: {
-    // Must match the URL clients paste into Grok Connect Apps.
-    resource: 'https://mcp.belliedmonkey.cc/mcp/v1',
-    authorization_servers: ['https://mcp.belliedmonkey.cc'],
+/**
+ * The provider snapshots resourceMetadata at construction time (no function
+ * form in 1.2.4), so one instance is built per public origin. Both share the
+ * same OAUTH_KV; token records carry their audience, which keeps .cc and .com
+ * tokens from crossing over.
+ */
+function oauthOptions(origin: string): OAuthProviderOptions<Env> {
+  return {
+    // Device-session paths stay on defaultHandler (unwrapToken).
+    // apiRoute resource is /mcp/v1 — cannot cover /api/* without widening resource (would break Grok paste URL).
+    apiRoute: '/mcp/v1',
+    apiHandler,
+    defaultHandler,
+    authorizeEndpoint: '/authorize',
+    tokenEndpoint: '/oauth/token',
+    clientRegistrationEndpoint: '/oauth/register',
+    scopesSupported: [...SCOPES],
+    requiredScopes: ['mcp:read'],
+    clientIdMetadataDocumentEnabled: true,
+    // BEL-151 ACCEPT-RD1/RD2: App FREEZE custom scheme DCR (RFC 8252 private-use).
+    allowPrivateUseRedirectUris: true,
+    clientRegistrationCallback,
+    // Must match the URL clients paste into Grok Connect Apps for this host.
+    resourceMetadata: resourceMetadataFor(origin),
+  };
+}
+
+const ccProvider = new OAuthProvider<Env>(oauthOptions(CC_ORIGIN));
+const comProvider = new OAuthProvider<Env>(oauthOptions(COM_ORIGIN));
+
+export default {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
+    const url = new URL(request.url);
+    const origin = originForHostname(url.hostname);
+    // The provider only serves the canonical resource-path document
+    // (/.well-known/oauth-protected-resource/mcp/v1). RFC 9728 clients also
+    // probe the bare well-known URL, so answer it here for both hosts.
+    if (url.pathname === '/.well-known/oauth-protected-resource') {
+      return Response.json(protectedResourceMetadataFor(origin), {
+        headers: { 'Cache-Control': 'no-store' },
+      });
+    }
+    const provider = origin === COM_ORIGIN ? comProvider : ccProvider;
+    // OAuthProvider injects env.OAUTH_PROVIDER only when absent. Workers may
+    // reuse the env object between requests, so a shared env would pin every
+    // later request to whichever provider handled the first one (making .cc
+    // and .com resources leak into each other). Give each dispatch a shallow
+    // copy so the correct helpers are installed per request.
+    const providerEnv = { ...env };
+    delete (providerEnv as Partial<Env>).OAUTH_PROVIDER;
+    return provider.fetch(request, providerEnv, ctx);
   },
-});
+};

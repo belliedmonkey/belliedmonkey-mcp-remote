@@ -11,7 +11,9 @@
     "verify": "node scripts/verify.mjs",
     "test:confirm": "node scripts/confirm-selftest.mjs",
     "test:tools": "node scripts/tool-selftest.mjs",
-    "test": "node scripts/confirm-selftest.mjs && node scripts/tool-selftest.mjs",
+    "test:hosts": "node scripts/host-matrix-selftest.mjs",
+    "test": "node scripts/host-matrix-selftest.mjs && node scripts/confirm-selftest.mjs && node scripts/tool-selftest.mjs",
+    "smoke:hosts": "node scripts/host-matrix-live.mjs",
     "smoke:live": "node scripts/live-confirm-smoke.mjs"
   },
   "dependencies": {
