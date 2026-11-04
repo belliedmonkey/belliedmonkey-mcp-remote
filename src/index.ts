@@ -245,10 +245,14 @@ export default {
     // OAuthProvider injects env.OAUTH_PROVIDER only when absent. Workers may
     // reuse the env object between requests, so a shared env would pin every
     // later request to whichever provider handled the first one (making .cc
-    // and .com resources leak into each other). Give each dispatch a shallow
-    // copy so the correct helpers are installed per request.
-    const providerEnv = { ...env };
-    delete (providerEnv as Partial<Env>).OAUTH_PROVIDER;
+    // and .com resources leak into each other). .cc keeps the original env
+    // exactly as before; only .com dispatches through a copy with the helper
+    // slot cleared, so the original env never holds a .com helper.
+    let providerEnv = env;
+    if (origin === COM_ORIGIN) {
+      providerEnv = { ...env };
+      delete (providerEnv as Partial<Env>).OAUTH_PROVIDER;
+    }
     return provider.fetch(providerRequest, providerEnv, ctx);
   },
 };
