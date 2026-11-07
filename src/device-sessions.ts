@@ -8,6 +8,7 @@ import {
   PENDING_TTL_SEC,
   decidePending,
   gcPending,
+  listPendingForDevice,
   revokePendingForDevice,
 } from './pending-confirm';
 
@@ -307,7 +308,12 @@ async function handleDeviceSessionsPost(
     // heartbeats promote bootstrap → pair reachability window only; kind stays unless already pair
     if (rec.kind !== 'pair') rec.kind = 'pair';
     await putSession(env, rec, ttl);
-    return json(200, { ok: true, ttl_sec: ttl, last_seen: rec.last_seen });
+    // B-PUSH (BEL-151): the paired foreground App polls this same 200 to learn
+    // about Worker-owned confirms. `pending` is always present (empty array when
+    // there is none) and never carries args; it is scoped to this session's
+    // oauth_sub + device_id. PENDING_TTL_SEC remains the authority (120s).
+    const pending = await listPendingForDevice(env, sub, device_id, now);
+    return json(200, { ok: true, ttl_sec: ttl, last_seen: rec.last_seen, pending });
   }
 
   if (path.endsWith('/bootstrap')) {

@@ -163,6 +163,62 @@ check(
   { stored_has_lang: raw1.includes('video_lang') },
 );
 
+// ---------- B-PUSH: heartbeat 200 carries this device's pending ---------------
+const hbB = await post(env, '/api/mcp/device-sessions/heartbeat', 'tok-a', {
+  device_id: 'dev-b',
+  device_cred: credB,
+});
+check(
+  'heartbeat_pending_empty_array_present',
+  hbB.status === 200 &&
+    Object.prototype.hasOwnProperty.call(hbB.json, 'pending') &&
+    Array.isArray(hbB.json.pending) &&
+    hbB.json.pending.length === 0,
+  { status: hbB.status, body: hbB.json },
+);
+
+const hbA = await post(env, '/api/mcp/device-sessions/heartbeat', 'tok-a', {
+  device_id: 'dev-a',
+  device_cred: credA,
+});
+const hbAOne = Array.isArray(hbA.json.pending) ? hbA.json.pending[0] : null;
+check(
+  'heartbeat_pending_shape_scoped',
+  hbA.status === 200 &&
+    hbA.json.pending.length === 1 &&
+    hbAOne.pending_id === p1.pending_id &&
+    hbAOne.action === 'start_live_subtitles' &&
+    hbAOne.expires_at === p1.expires_at &&
+    hbAOne.expires_in_sec > 0 &&
+    hbAOne.expires_in_sec <= 120 &&
+    Object.keys(hbAOne).sort().join(',') === 'action,expires_at,expires_in_sec,pending_id',
+  { status: hbA.status, pending: hbA.json.pending },
+);
+check(
+  'heartbeat_pending_has_no_args_or_text',
+  !JSON.stringify(hbA.json).includes('args_hash') &&
+    !JSON.stringify(hbA.json).includes('video_lang') &&
+    !JSON.stringify(hbA.json).includes('"en"') &&
+    !JSON.stringify(hbA.json).includes('"zh"') &&
+    P.PENDING_TTL_SEC === 120,
+  { ttl: P.PENDING_TTL_SEC },
+);
+
+const hbCrossDevice = await post(env, '/api/mcp/device-sessions/heartbeat', 'tok-a', {
+  device_id: 'dev-b',
+  device_cred: credB,
+});
+const hbCrossAccount = await post(env, '/api/mcp/device-sessions/heartbeat', 'tok-b', {
+  device_id: 'dev-c',
+  device_cred: credC,
+});
+check(
+  'heartbeat_pending_never_crosses_device_or_account',
+  hbCrossDevice.status === 200 && hbCrossDevice.json.pending.length === 0 &&
+    hbCrossAccount.status === 200 && hbCrossAccount.json.pending.length === 0,
+  { device: hbCrossDevice.json.pending, account: hbCrossAccount.json.pending },
+);
+
 // ---------- allow → resumed openedSubtitles, micStarted:false -----------------
 const allow = await post(env, '/api/mcp/device-sessions/confirm', 'tok-a', {
   pending_id: p1.pending_id,
@@ -179,6 +235,18 @@ check(
     allow.json.resumed.receipt.code === 'ok' &&
     allow.json.resumed.receipt.fix.micStarted === false,
   allow.json,
+);
+
+const hbAfterAllow = await post(env, '/api/mcp/device-sessions/heartbeat', 'tok-a', {
+  device_id: 'dev-a',
+  device_cred: credA,
+});
+check(
+  'heartbeat_pending_drops_decided',
+  hbAfterAllow.status === 200 &&
+    Array.isArray(hbAfterAllow.json.pending) &&
+    hbAfterAllow.json.pending.length === 0,
+  { pending: hbAfterAllow.json.pending },
 );
 
 const allowAgain = await post(env, '/api/mcp/device-sessions/confirm', 'tok-a', {
@@ -226,6 +294,16 @@ check(
     deny.json.resumed.openedSubtitles === false &&
     deny.json.resumed.micStarted === false,
   deny.json,
+);
+
+const hbAfterDeny = await post(env, '/api/mcp/device-sessions/heartbeat', 'tok-a', {
+  device_id: 'dev-a',
+  device_cred: credA,
+});
+check(
+  'heartbeat_pending_drops_denied',
+  hbAfterDeny.status === 200 && hbAfterDeny.json.pending.length === 0,
+  { pending: hbAfterDeny.json.pending },
 );
 
 // ---------- wrong credential / wrong device / cross account ------------------
@@ -327,6 +405,18 @@ check(
     expired.json.status === 'expired' &&
     !JSON.stringify(expired.json).includes('openedSubtitles'),
   { status: expired.status, json: expired.json },
+);
+
+const hbExpired = await post(env, '/api/mcp/device-sessions/heartbeat', 'tok-a', {
+  device_id: 'dev-b',
+  device_cred: credB,
+});
+check(
+  'heartbeat_pending_omits_expired',
+  hbExpired.status === 200 &&
+    Array.isArray(hbExpired.json.pending) &&
+    hbExpired.json.pending.length === 0,
+  { pending: hbExpired.json.pending },
 );
 
 // ---------- bridge DOWN revokes remaining pending ---------------------------
