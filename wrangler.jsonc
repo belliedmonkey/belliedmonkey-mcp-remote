@@ -18,6 +18,13 @@
       "id": "b09e9e4d1ba945299d2e26a9b601e5a5"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "OAUTH_DB",
+      "database_name": "belliedmonkey-mcp-oauth-d1",
+      "database_id": "5488298d-687a-4a08-8c04-74cd051dafb7"
+    }
+  ],
   "routes": [
     {
       "pattern": "mcp.belliedmonkey.cc",

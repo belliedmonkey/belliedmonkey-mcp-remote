@@ -141,6 +141,56 @@ export async function getPending(
   return loadPending(env, sub, id, now);
 }
 
+/**
+ * B-PUSH (BEL-151): the only public view of a pending that leaves the Worker.
+ * It is scoped to one oauth_sub + device_id and carries no args, hashes, text or
+ * translation — just enough for the paired App to render one card.
+ */
+export type PendingSummary = {
+  pending_id: string;
+  action: string;
+  expires_at: number;
+  expires_in_sec: number;
+};
+
+/**
+ * List this device's still-pending confirms, oldest first. Reads the existing
+ * `pending_confirm_idx:<sub>` and filters by both oauth_sub and device_id, so a
+ * cross-account or cross-device row can never leak into a heartbeat. A record
+ * past its TTL is turned into `expired` by loadPending and therefore omitted.
+ */
+export async function listPendingForDevice(
+  env: EnvLike,
+  sub: string,
+  deviceId: string,
+  now = Date.now(),
+): Promise<PendingSummary[]> {
+  if (!sub || !deviceId) return [];
+  const ids = await readIdx(env, sub);
+  if (ids.length === 0) return [];
+  const rows: Array<{ created_at: number; summary: PendingSummary }> = [];
+  for (const id of ids) {
+    const rec = await loadPending(env, sub, id, now);
+    if (!rec) continue;
+    if (rec.status !== 'pending') continue;
+    if (rec.oauth_sub !== sub) continue;
+    if (rec.device_id !== deviceId) continue;
+    if (rec.expires_at <= now) continue;
+    rows.push({
+      created_at: rec.created_at,
+      summary: {
+        pending_id: rec.pending_id,
+        action: rec.action,
+        expires_at: rec.expires_at,
+        expires_in_sec: Math.max(0, Math.ceil((rec.expires_at - now) / 1000)),
+      },
+    });
+  }
+  // FIFO: the App shows one card at a time; the Cloud decides which one is next.
+  rows.sort((a, b) => a.created_at - b.created_at);
+  return rows.map((row) => row.summary);
+}
+
 async function ownerOf(env: EnvLike, id: string): Promise<string | null> {
   return env.OAUTH_KV.get(ownerKey(id));
 }
