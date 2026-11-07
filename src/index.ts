@@ -52,6 +52,23 @@ const ALLOWED_HOSTS = [
   'belliedmonkey-mcp-remote.belliedmonkey.workers.dev',
 ];
 
+/**
+ * BEL-213: the preview Worker lives on its own workers.dev hostname. Add that
+ * host to the MCP transport allowlist only when the preview env declares it;
+ * production's allowlist is untouched.
+ */
+function allowedHostnamesFor(env: Env): string[] {
+  if (!env.PREVIEW_ORIGIN) return ALLOWED_HOSTS;
+  try {
+    const previewHost = new URL(env.PREVIEW_ORIGIN).host.toLowerCase();
+    return ALLOWED_HOSTS.includes(previewHost)
+      ? ALLOWED_HOSTS
+      : [...ALLOWED_HOSTS, previewHost];
+  } catch {
+    return ALLOWED_HOSTS;
+  }
+}
+
 const defaultHandler = {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -136,7 +153,7 @@ const apiHandler = {
       },
       {
         route: '/mcp/v1',
-        allowedHostnames: ALLOWED_HOSTS,
+        allowedHostnames: allowedHostnamesFor(env),
         allowedOriginHostnames: '*',
         authContext: { props },
         corsOptions: {
