@@ -271,9 +271,9 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ): Promise<Response> {
-    // BEL-213: with OAUTH_DB bound, OAuth state reads/writes go to D1 while the
-    // same binding still serves pending/device/caps. Without it, env is passed
-    // through untouched (the production path).
+    // BEL-213: with OAUTH_DB bound, ALL OAUTH_KV keys (OAuth state plus
+    // pending/device/caps) go to D1. Without it, env is passed through
+    // untouched — 100% the old KV path, used as the rollback path.
     env = withOAuthKvD1(env);
     const url = new URL(request.url);
     const origin = originForRequest(url, env);

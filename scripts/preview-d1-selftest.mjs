@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 /**
- * BEL-213 preview self-test: OAuth five-state storage on preview D1.
+ * BEL-213 preview self-test: ALL OAUTH_KV keys on preview D1.
+ *
+ * After the all-D1 facade change there is no prefix routing: OAuth state and
+ * pending_confirm / device_session / mcp_client_caps all live in D1. T5
+ * therefore asserts the pending row is in D1 and that the preview KV namespace
+ * has no corresponding key (raw KV is checked through the wrangler CLI, not
+ * through the facade).
  *
  * Runs only against the preview Worker / preview D1 / preview KV:
  *   PREVIEW_ORIGIN  https://belliedmonkey-mcp-remote-preview.belliedmonkey.workers.dev
@@ -57,6 +63,23 @@ function d1(sql) {
   );
   const parsed = JSON.parse(stdout);
   return parsed[0]?.results ?? [];
+}
+
+const PREVIEW_KV_ID = '7af5fa180bbc453e86057bc6187d37e0';
+
+/** Read the raw preview KV namespace, bypassing the D1 facade. */
+function kvListRaw(prefix) {
+  const stdout = execFileSync(
+    WRANGLER,
+    ['kv', 'key', 'list', '--namespace-id', PREVIEW_KV_ID, '--remote', '--prefix', prefix],
+    { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  try {
+    const parsed = JSON.parse(stdout);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 async function jsonFetch(url, init) {
@@ -317,45 +340,71 @@ async function main() {
   } catch {
     receipt = null;
   }
+  // need_confirm receipts carry no top-level execution flags; the honest check
+  // is ok=false + code=need_confirm + nothing claiming mic/subtitles started.
+  const micStarted = receipt?.micStarted ?? receipt?.fix?.micStarted;
+  const openedSubtitles = receipt?.openedSubtitles ?? receipt?.fix?.openedSubtitles;
   record(
     'T4',
     'start_live_subtitles_unconfirmed_need_confirm',
     call.status === 200 &&
       receipt?.ok === false &&
       receipt?.code === 'need_confirm' &&
-      receipt?.micStarted === false &&
-      receipt?.openedSubtitles === false,
+      micStarted !== true &&
+      openedSubtitles !== true,
     {
       http: call.status,
       ok: receipt?.ok,
       code: receipt?.code,
-      micStarted: receipt?.micStarted,
-      openedSubtitles: receipt?.openedSubtitles,
+      micStarted: micStarted ?? false,
+      openedSubtitles: openedSubtitles ?? false,
       pending_id: receipt?.fix?.pending_id ?? null,
       action_deeplink_has_pending: String(receipt?.fix?.action_deeplink || '').includes('pending_id='),
+      action: receipt?.action ?? null,
+      message: receipt?.message ?? null,
     },
   );
 
-  const pendingList = await harness('/__kv/list?prefix=pending_confirm%3A');
-  const pendingNames = (pendingList.body.keys || []).map((k) => k.name);
-  const ourPending = pendingNames.find((name) => name.includes(USER_ID)) || pendingNames[0];
-  let pendingValue = null;
-  if (ourPending) {
-    const got = await harness(`/__kv/get?key=${encodeURIComponent(ourPending)}`);
-    pendingValue = got.body.value;
-  }
-  record('T5', 'pending_in_preview_kv', !!ourPending && !!pendingValue, {
-    pending_keys: pendingNames.length,
+  // All-D1: pending_confirm and device_session must be rows in preview D1.
+  const pendingD1 = d1(
+    `SELECT k, v FROM oauth_kv WHERE k LIKE 'pending_confirm:${USER_ID}:%' AND (expires_at IS NULL OR expires_at > unixepoch())`,
+  );
+  const deviceD1 = d1(
+    `SELECT k FROM oauth_kv WHERE k LIKE 'device_session:${USER_ID}:%' AND (expires_at IS NULL OR expires_at > unixepoch())`,
+  );
+  const ourPending = pendingD1[0]?.k ?? null;
+  record('T5', 'pending_in_preview_d1', pendingD1.length >= 1 && !!pendingD1[0].v, {
+    pending_rows_in_d1: pendingD1.length,
     pending_key: ourPending ? `${ourPending.slice(0, 28)}…` : null,
-    pending_value_present: !!pendingValue,
+    pending_value_present: !!pendingD1[0]?.v,
   });
-  const pendingD1 = d1(`SELECT count(*) AS n FROM oauth_kv WHERE k LIKE 'pending_confirm:%'`);
-  const deviceD1 = d1(`SELECT count(*) AS n FROM oauth_kv WHERE k LIKE 'device_session:%'`);
+  record('T5', 'device_session_in_preview_d1', deviceD1.length >= 1, {
+    device_rows_in_d1: deviceD1.length,
+    device_key: deviceD1[0]?.k ? `${String(deviceD1[0].k).slice(0, 28)}…` : null,
+  });
+
+  // Raw KV must have no pending/device keys for this run (writes now go to D1,
+  // so the free-tier KV 10048 quota is no longer on the T4/T5 path).
+  const rawPending = kvListRaw(`pending_confirm:${USER_ID}`);
+  const rawDevice = kvListRaw(`device_session:${USER_ID}`);
   record(
     'T5',
-    'pending_and_device_not_in_d1',
-    pendingD1[0].n === 0 && deviceD1[0].n === 0,
-    { pending_rows_in_d1: pendingD1[0].n, device_rows_in_d1: deviceD1[0].n },
+    'pending_and_device_absent_from_preview_kv',
+    rawPending.length === 0 && rawDevice.length === 0,
+    {
+      pending_keys_in_kv: rawPending.length,
+      device_keys_in_kv: rawDevice.length,
+    },
+  );
+
+  // Empty-prefix list now scans D1 (no prefix routing).
+  const allList = await harness('/__kv/list');
+  const allNames = (allList.body.keys || []).map((k) => k.name);
+  record(
+    'T5',
+    'empty_prefix_list_scans_d1',
+    Array.isArray(allNames) && !!ourPending && allNames.includes(ourPending),
+    { list_keys: allNames.length, found_our_pending: !!ourPending && allNames.includes(ourPending) },
   );
 
   // Keep one token key id around for the report (never print the token itself).

@@ -1,47 +1,32 @@
 /**
- * BEL-213 preview · D1-backed subset of the KV API used by
+ * BEL-213 · D1-backed replacement for the KV API used by
  * `@cloudflare/workers-oauth-provider@1.2.4`.
  *
  * The provider hard-codes `env.OAUTH_KV` and has no storage adapter. Rather than
- * forking it, we wrap the binding in a thin facade: OAuth state (token/grant/
- * client/transaction/two JTI namespaces) goes to D1 (`OAUTH_DB`), while every
- * other key (pending_confirm, device_session, client caps) stays on the real KV.
+ * forking it, we wrap the binding in a thin facade. With `OAUTH_DB` bound,
+ * **every** key goes to D1 (`OAUTH_DB`): the OAuth provider's token/grant/
+ * client/transaction/JTI state and this Worker's own pending_confirm,
+ * device_session and mcp_client_caps keys (including `_owner`, `_idx` and
+ * `_history` companions).
  *
- * If `OAUTH_DB` is not bound the caller keeps the original KV unchanged, so the
- * production default environment is byte-for-byte the old storage path.
+ * There is deliberately no prefix routing: `isD1Key` / `isD1ListPrefix` are
+ * always true, and an empty `list()` prefix scans D1 too. If `OAUTH_DB` is not
+ * bound, `withOAuthKvD1` returns the original env untouched, so the rollback
+ * path is byte-for-byte the old KV storage path.
  */
 
-/** Key prefixes owned by the OAuth provider's durable state. */
-export const D1_KEY_PREFIXES = [
-  'token:',
-  'grant:',
-  'client:',
-  'transaction:',
-  'enterprise-jti:',
-  'client-assertion-jti:',
-] as const;
-
-const HEX64 = /^[0-9a-f]{64}$/i;
 const KV_MIN_TTL_SECONDS = 60;
 const KV_MAX_LIST_LIMIT = 1000;
 const KV_DEFAULT_LIST_LIMIT = 1000;
 
-/** A bare 64-char hex key is the legacy, prefix-less JTI marker. */
-export function isD1Key(key: string): boolean {
-  if (D1_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) return true;
-  return !key.includes(':') && HEX64.test(key);
+/** All keys are D1-owned whenever the facade is installed. */
+export function isD1Key(_key: string): boolean {
+  return true;
 }
 
-/**
- * Route a `list()` call by its prefix. Anything that can only name D1-owned
- * keys goes to D1; an empty prefix is deliberately left on KV so this slice
- * never scans the whole D1 table.
- */
-function isD1ListPrefix(prefix: string): boolean {
-  if (!prefix) return false;
-  return D1_KEY_PREFIXES.some(
-    (known) => known.startsWith(prefix) || prefix.startsWith(known),
-  );
+/** All list prefixes (including the empty prefix) are D1-owned. */
+function isD1ListPrefix(_prefix: string): boolean {
+  return true;
 }
 
 /** Exclusive upper bound for a key prefix. OAuth prefixes are ASCII. */
@@ -117,26 +102,22 @@ function decodeCursor(cursor: string): string {
 type DbRow = { k: string; v?: string; metadata?: string | null; expires_at?: number | null };
 
 /**
- * Facade implementing the subset of `KVNamespace` that the OAuth provider uses:
- * get (text/json/arrayBuffer), put (with expirationTtl/expiration/metadata),
- * delete and list (prefix/cursor/limit with key metadata).
+ * Facade implementing the `KVNamespace` surface this Worker uses: get
+ * (text/json/arrayBuffer), put (with expirationTtl/expiration/metadata),
+ * delete and list (prefix/cursor/limit with key metadata). Every key is stored
+ * in D1; there is no KV fallback inside the facade.
  *
  * Expiry is enforced at read time (`expires_at <= now` is absent), matching the
  * KV TTL semantics the provider relies on. No cron is required.
  */
 export class OAuthKvD1Facade {
-  constructor(
-    private readonly db: D1Database,
-    private readonly kv: KVNamespace,
-  ) {}
+  constructor(private readonly db: D1Database) {}
 
   async get(
     key: string,
     options?: FacadeGetOptions,
   ): Promise<string | ArrayBuffer | null | unknown> {
-    if (!isD1Key(key)) {
-      return this.kv.get(key, options as never) as Promise<unknown>;
-    }
+    // isD1Key is always true here: the facade only exists when OAUTH_DB is bound.
     const row = await this.db
       .prepare(
         'SELECT v FROM oauth_kv WHERE k = ? AND (expires_at IS NULL OR expires_at > unixepoch())',
@@ -156,10 +137,7 @@ export class OAuthKvD1Facade {
     value: string | ArrayBuffer | ArrayBufferView | ReadableStream,
     options?: KvPutOptions,
   ): Promise<void> {
-    if (!isD1Key(key)) {
-      await this.kv.put(key, value as never, options as never);
-      return;
-    }
+    // isD1Key is always true here: the facade only exists when OAUTH_DB is bound.
     const text = await valueToString(value);
     const now = Math.floor(Date.now() / 1000);
     await this.db
@@ -175,10 +153,7 @@ export class OAuthKvD1Facade {
   }
 
   async delete(key: string): Promise<void> {
-    if (!isD1Key(key)) {
-      await this.kv.delete(key);
-      return;
-    }
+    // isD1Key is always true here: the facade only exists when OAUTH_DB is bound.
     await this.db.prepare('DELETE FROM oauth_kv WHERE k = ?').bind(key).run();
   }
 
@@ -192,30 +167,32 @@ export class OAuthKvD1Facade {
     cursor?: string;
   }> {
     const prefix = options?.prefix ?? '';
-    if (!isD1ListPrefix(prefix)) {
-      return this.kv.list(options as never) as unknown as Promise<{
-        keys: Array<{ name: string; metadata?: unknown; expiration?: number }>;
-        list_complete: boolean;
-        cursor?: string;
-      }>;
-    }
-
+    // isD1ListPrefix (including the empty prefix) is always true here.
     const requestedLimit = Math.floor(Number(options?.limit ?? KV_DEFAULT_LIST_LIMIT));
     const limit = Math.min(
       KV_MAX_LIST_LIMIT,
       Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : KV_DEFAULT_LIST_LIMIT),
     );
-    const upper = prefixUpperBound(prefix);
+    const upper = prefix ? prefixUpperBound(prefix) : null;
     const cursorKey = options?.cursor ? decodeCursor(options.cursor) : null;
 
+    const where: string[] = ['k >= ?'];
+    const binds: Array<string | number> = [prefix];
+    if (upper !== null) {
+      where.push('k < ?');
+      binds.push(upper);
+    }
+    where.push('(expires_at IS NULL OR expires_at > unixepoch())');
+    if (cursorKey) {
+      where.push('k > ?');
+      binds.push(cursorKey);
+    }
+    binds.push(limit + 1);
+
     const sql =
-      'SELECT k, metadata, expires_at FROM oauth_kv ' +
-      'WHERE k >= ? AND k < ? AND (expires_at IS NULL OR expires_at > unixepoch())' +
-      (cursorKey ? ' AND k > ?' : '') +
+      'SELECT k, metadata, expires_at FROM oauth_kv WHERE ' +
+      where.join(' AND ') +
       ' ORDER BY k LIMIT ?';
-    const binds = cursorKey
-      ? [prefix, upper, cursorKey, limit + 1]
-      : [prefix, upper, limit + 1];
     const result = await this.db.prepare(sql).bind(...binds).all<DbRow>();
     const rows = result.results ?? [];
     const page = rows.slice(0, limit);
@@ -255,18 +232,15 @@ type EnvWithOauthDb = {
 
 /**
  * If `OAUTH_DB` is bound, return a copy of `env` whose `OAUTH_KV` is the D1
- * facade (falling back to the raw KV for non-OAuth keys). Otherwise return the
- * original env untouched — the production default path.
+ * facade: every OAuth / pending / device / caps key is read and written in D1.
+ * Otherwise return the original env untouched — the 100% KV rollback path.
  */
 export function withOAuthKvD1<T extends EnvWithOauthDb>(env: T): T {
   if (!env.OAUTH_DB) return env;
   const current = env.OAUTH_KV as unknown as Record<PropertyKey, unknown>;
   if (current && current[FACADE_MARK]) return env;
 
-  const facade = new OAuthKvD1Facade(
-    env.OAUTH_DB,
-    env.OAUTH_KV,
-  ) as unknown as KVNamespace;
+  const facade = new OAuthKvD1Facade(env.OAUTH_DB) as unknown as KVNamespace;
   (facade as unknown as Record<PropertyKey, unknown>)[FACADE_MARK] = true;
   return { ...env, OAUTH_KV: facade };
 }
