@@ -14,6 +14,7 @@ import { flavorFromHost } from './receipt';
 import { registerTools } from './tools';
 import { handleDeviceSessions, isDeviceSessionsPath } from './device-sessions';
 import { captureInitialize } from './client-caps';
+import { withOAuthKvD1 } from './oauth-kv-d1';
 import {
   CC_ORIGIN,
   COM_ORIGIN,
@@ -24,6 +25,10 @@ import {
 
 export interface Env {
   OAUTH_KV: KVNamespace;
+  /** BEL-213: present only in the preview env; absent in production. */
+  OAUTH_DB?: D1Database;
+  /** BEL-213: preview-only canonical origin (workers.dev). */
+  PREVIEW_ORIGIN?: string;
   OAUTH_PROVIDER: import('@cloudflare/workers-oauth-provider').OAuthHelpers;
   MCP_RESOURCE_URL: string;
   ISSUER: string;
@@ -211,14 +216,50 @@ function oauthOptions(origin: string): OAuthProviderOptions<Env> {
 const ccProvider = new OAuthProvider<Env>(oauthOptions(CC_ORIGIN));
 const comProvider = new OAuthProvider<Env>(oauthOptions(COM_ORIGIN));
 
+/**
+ * BEL-213: a preview deployment on *.workers.dev must advertise its own origin,
+ * otherwise the provider pins the .cc resource and its own tokens fail the
+ * audience check on the preview host. This only activates when the preview env
+ * explicitly sets PREVIEW_ORIGIN; production never does.
+ */
+function originForRequest(url: URL, env: Env): string {
+  if (env.PREVIEW_ORIGIN) {
+    try {
+      if (new URL(env.PREVIEW_ORIGIN).host.toLowerCase() === url.hostname.toLowerCase()) {
+        return env.PREVIEW_ORIGIN;
+      }
+    } catch {
+      /* malformed preview var: fall through to the production mapping */
+    }
+  }
+  return originForHostname(url.hostname);
+}
+
+const providerByOrigin = new Map<string, OAuthProvider<Env>>([
+  [CC_ORIGIN, ccProvider],
+  [COM_ORIGIN, comProvider],
+]);
+
+function providerForOrigin(origin: string): OAuthProvider<Env> {
+  const existing = providerByOrigin.get(origin);
+  if (existing) return existing;
+  const created = new OAuthProvider<Env>(oauthOptions(origin));
+  providerByOrigin.set(origin, created);
+  return created;
+}
+
 export default {
   async fetch(
     request: Request,
     env: Env,
     ctx: ExecutionContext,
   ): Promise<Response> {
+    // BEL-213: with OAUTH_DB bound, OAuth state reads/writes go to D1 while the
+    // same binding still serves pending/device/caps. Without it, env is passed
+    // through untouched (the production path).
+    env = withOAuthKvD1(env);
     const url = new URL(request.url);
-    const origin = originForHostname(url.hostname);
+    const origin = originForRequest(url, env);
     // The provider only serves the canonical resource-path document
     // (/.well-known/oauth-protected-resource/mcp/v1). RFC 9728 clients also
     // probe the bare well-known URL, so answer it here for both hosts.
@@ -227,7 +268,7 @@ export default {
         headers: { 'Cache-Control': 'no-store' },
       });
     }
-    const provider = origin === COM_ORIGIN ? comProvider : ccProvider;
+    const provider = providerForOrigin(origin);
     // The China edge forwards mcp.belliedmonkey.com to the mid-host
     // mcp-china.belliedmonkey.cc. Present that request to the provider as the
     // public .com origin so issuer, resource, path-PRM and the MCP challenge

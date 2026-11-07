@@ -45,6 +45,40 @@ npm run test:tools     # real tool handlers: need_confirm/replay/wait/A-gate/neg
 3. Complete OAuth (email consent on `/authorize`)
 4. Call `ready.check` / `open_setup`
 
+## BEL-213 preview: OAuth state in D1
+
+The production/default environment is unchanged: no D1 binding, the same
+`OAUTH_KV` namespace (`b09e9e4d…`) and the same custom-domain route. Everything
+below lives **only** in `env.preview`.
+
+- `src/oauth-kv-d1.ts` is a thin facade over `env.OAUTH_KV`. When `OAUTH_DB` is
+  bound it routes `token:` / `grant:` / `client:` / `transaction:` /
+  `enterprise-jti:` / `client-assertion-jti:` (plus legacy bare 64-hex JTI keys)
+  to D1, and delegates every other key (pending_confirm, device_session,
+  client caps) to the real KV. Without `OAUTH_DB`, `env` is returned untouched.
+- `migrations/0001_oauth_kv.sql` creates `oauth_kv(k PK, v, metadata, expires_at)`
+  and an `expires_at` index. Expiry is filtered on read (`expires_at <= now` is
+  absent); no cron is added.
+- `env.preview` deploys the separate Worker
+  `belliedmonkey-mcp-remote-preview` on `workers.dev` with a preview-only KV
+  namespace and a preview-only D1 database. It has no `mcp.belliedmonkey.cc`
+  route.
+- The preview database starts empty. If this is ever cut over to production,
+  OAuth clients/grants/tokens/JTIs are empty and users must re-authorize.
+  Device pairing stays in KV and does **not** mean the user is authorized;
+  pending confirmations also stay in KV. Heartbeats still write KV, so an open
+  App can still approach the free-tier 1,000 KV writes/day even after OAuth
+  state moves to D1.
+
+```bash
+npx wrangler d1 migrations apply OAUTH_DB --remote --env preview
+npx wrangler secret put SUPABASE_ANON_KEY --env preview   # not committed to config
+npx wrangler deploy --env preview      # never `wrangler deploy` without --env preview
+```
+
+The preview harness used for the BEL-213 evidence is not part of this repo's
+deployed code; the QA evidence lives in `~/qa/mcp-oauth-kv-to-d1-20261107/`.
+
 ## Develop
 
 ```bash
