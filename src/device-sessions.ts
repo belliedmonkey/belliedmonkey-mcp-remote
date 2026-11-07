@@ -313,6 +313,7 @@ async function handleDeviceSessionsPost(
     // there is none) and never carries args; it is scoped to this session's
     // oauth_sub + device_id. PENDING_TTL_SEC remains the authority (120s).
     const pending = await listPendingForDevice(env, sub, device_id, now);
+    console.log(JSON.stringify({ ev: "heartbeat", sub, device_id, pending: pending.length }));
     return json(200, { ok: true, ttl_sec: ttl, last_seen: rec.last_seen, pending });
   }
 
