@@ -2,7 +2,10 @@
   "name": "belliedmonkey-mcp-remote",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-30",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
   "account_id": "a7dbeb09637ad5f3cb77169160cfa9f3",
   "workers_dev": true,
   "preview_urls": false,
@@ -23,5 +26,32 @@
       "pattern": "mcp.belliedmonkey.cc",
       "custom_domain": true
     }
-  ]
+  ],
+  "env": {
+    "preview": {
+      "name": "belliedmonkey-mcp-remote-preview",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": [],
+      "kv_namespaces": [
+        {
+          "binding": "OAUTH_KV",
+          "id": "7af5fa180bbc453e86057bc6187d37e0"
+        }
+      ],
+      "d1_databases": [
+        {
+          "binding": "OAUTH_DB",
+          "database_name": "belliedmonkey-mcp-oauth-d1-preview",
+          "database_id": "63814c07-f5fc-4d56-be93-b977fdf7f5eb"
+        }
+      ],
+      "vars": {
+        "PREVIEW_ORIGIN": "https://belliedmonkey-mcp-remote-preview.belliedmonkey.workers.dev",
+        "MCP_RESOURCE_URL": "https://belliedmonkey-mcp-remote-preview.belliedmonkey.workers.dev/mcp/v1",
+        "ISSUER": "https://belliedmonkey-mcp-remote-preview.belliedmonkey.workers.dev",
+        "SUPABASE_URL": "https://cavezcufztzqsohpjmup.supabase.co"
+      }
+    }
+  }
 }
